@@ -6,198 +6,202 @@ import re
 from openpyxl import Workbook
 from datetime import datetime
 from PyPDF2 import PdfReader
-from typing import List, Tuple, Dict
-import logging
-from pathlib import Path
-
-# Constants
-THAI_FONT = ('TH Sarabun New', 14)
-WINDOW_SIZE = "800x600"
-THAI_TITLES = r'''|เด็กหญิง|เด็กชาย|ด.ญ.|ด.ช.|นาย|นาง|นางสาว|
-ว่าที่ร้อยตรี|ว่าที่ร้อยโท|ว่าที่ร้อยเอก|
-ว่าที่เรือตรี|ว่าที่เรือโท|ว่าที่เรือเอก|
-ว่าที่พันตรี|ว่าที่พันโท|ว่าที่พันเอก|
-ร้อยตรี|ร้อยโท|ร้อยเอก|
-เรือตรี|เรือโท|เรือเอก|
-พันตรี|พันโท|พันเอก|
-พลทหาร|พลตำรวจ|สิบตรี|สิบโท|สิบเอก|
-จ่าสิบตรี|จ่าสิบโท|จ่าสิบเอก|
-จ่าตรี|จ่าโท|จ่าเอก|
-พลตำรวจตรี|พลตำรวจโท|พลตำรวจเอก|
-พลโท|พลเอก|พลตรี|
-ดร|รศ|ผศ|ศ|
-หม่อมราชวงศ์|หม่อมหลวง|
-พระ|พระครู|พระมหา'''
-NAME_PATTERN = f'\\d+\\)\\s*({THAI_TITLES}[ก-์\\s]+[ก-์]+)'
-
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='name_extractor.log'
-)
 
 class NameExtractorApp:
-    """
-    A GUI application for extracting and processing Thai names from DOCX and PDF files.
-    Provides functionality to sort, filter, and export names to Excel.
-    """
-    
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root):
         self.root = root
         self.root.title("Thai Name Extractor")
-        self.root.geometry(WINDOW_SIZE)
-        
-        self.all_names: List[Tuple[str, int]] = []
-        self.sort_reverse: Dict[str, bool] = {'Name': False, 'Count': True}
-        
-        self._setup_gui()
-        
-    def _setup_gui(self) -> None:
-        """Initialize and configure all GUI elements"""
-        # Progress bar (new)
-        self.progress = ttk.Progressbar(self.root, mode='indeterminate')
-        self.progress.pack(fill=tk.X, padx=10, pady=5)
-        
-        # Style configuration (new)
-        style = ttk.Style()
-        style.configure("Custom.Treeview", font=THAI_FONT)
-        style.configure("Custom.TButton", font=THAI_FONT)
-        
-        # Button frame with improved layout
-        button_frame = ttk.Frame(self.root)
-        button_frame.pack(pady=10, fill=tk.X, padx=10)
-        
-        self.select_btn = ttk.Button(
-            button_frame, 
-            text="เลือกไฟล์ DOCX, PDF",
-            command=self.select_file,
-            style="Custom.TButton"
-        )
-        self.select_btn.pack(side=tk.LEFT, padx=5, expand=True)
-        
-        self.export_btn = ttk.Button(
-            button_frame,
-            text="ส่งออก Excel",
-            command=self.export_to_excel,
-            style="Custom.TButton"
-        )
-        self.export_btn.pack(side=tk.LEFT, padx=5, expand=True)
+        self.root.geometry("800x600")
 
-        # Search frame with improved layout
-        self._setup_search_frame()
+        # Set Thai font
+        self.thai_font = ('TH Sarabun New', 14)
         
-        # Treeview with improved configuration
-        self._setup_treeview()
+        # Store all names for filtering and sorting state
+        self.all_names = []
+        self.sort_reverse = {'Name': False, 'Count': True}
+        
+        # Create button frame
+        button_frame = tk.Frame(root)
+        button_frame.pack(pady=10)
+        
+        # Move select button to button frame
+        self.select_btn = tk.Button(button_frame, text="เลือกไฟล์ DOCX, PDF", command=self.select_file, font=self.thai_font)
+        self.select_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Add export button
+        self.export_btn = tk.Button(button_frame, text="ส่งออก Excel", command=self.export_to_excel, font=self.thai_font)
+        self.export_btn.pack(side=tk.LEFT, padx=5)
 
-    def _setup_search_frame(self) -> None:
-        """Setup search functionality"""
-        search_frame = ttk.Frame(self.root)
+        # Add search frame
+        search_frame = tk.Frame(root)
         search_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        ttk.Label(
-            search_frame,
-            text="ค้นหา:",
-            font=THAI_FONT
-        ).pack(side=tk.LEFT, padx=5)
-        
+        # Add search entry
+        tk.Label(search_frame, text="ค้นหา:", font=self.thai_font).pack(side=tk.LEFT, padx=5)
         self.search_var = tk.StringVar()
         self.search_var.trace('w', self.filter_names)
-        ttk.Entry(
-            search_frame,
-            textvariable=self.search_var,
-            font=THAI_FONT
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        search_entry = tk.Entry(search_frame, textvariable=self.search_var, font=self.thai_font)
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
-    def clean_thai_name(self, name: str) -> str:
-        """
-        Clean and normalize Thai names.
+        # Create treeview with Thai font
+        self.tree = ttk.Treeview(root, columns=('Name', 'Count'), show='headings')
+        self.tree.heading('Name', text='ชื่อ ↕', command=lambda: self.sort_treeview('Name'))
+        self.tree.heading('Count', text='จำนวน ↕', command=lambda: self.sort_treeview('Count'))
+        self.tree.pack(pady=10, padx=10, fill=tk.BOTH, expand=True)
         
-        Args:
-            name: Raw Thai name string
+        # Configure column widths
+        self.tree.column('Name', width=600)
+        self.tree.column('Count', width=100)
+
+        # Add scrollbar
+        scrollbar = ttk.Scrollbar(root, orient=tk.VERTICAL, command=self.tree.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+
+    def sort_treeview(self, column):
+        items = [(self.tree.set(item, column), item) for item in self.tree.get_children('')]
+        
+        # Convert count to integer for numeric sorting if sorting by Count
+        if column == 'Count':
+            items = [(int(value), item) for value, item in items]
             
-        Returns:
-            Cleaned name string
-        """
+        # Toggle sort direction
+        self.sort_reverse[column] = not self.sort_reverse[column]
+        items.sort(reverse=self.sort_reverse[column])
+        
+        # Update column headers to show sort direction
+        self.tree.heading('Name', text='ชื่อ ' + ('↓' if self.sort_reverse['Name'] else '↑') 
+                         if column == 'Name' else 'ชื่อ ↕')
+        self.tree.heading('Count', text='จำนวน ' + ('↓' if self.sort_reverse['Count'] else '↑') 
+                         if column == 'Count' else 'จำนวน ↕')
+        
+        # Rearrange items in sorted positions
+        for index, (val, item) in enumerate(items):
+            self.tree.move(item, '', index)
+
+    def filter_names(self, *args):
+        # Clear current items
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+            
+        search_term = self.search_var.get().lower()
+        
+        # Filter and display matching items
+        filtered_names = [(name, count) for name, count in self.all_names 
+                         if search_term in name.lower()]
+        
+        for name, count in filtered_names:
+            self.tree.insert('', tk.END, values=(name, count))
+
+    def select_file(self):
+        file_path = filedialog.askopenfilename(
+            filetypes=[
+                ("Document Files", "*.docx *.pdf"),
+                ("Word Documents", "*.docx"),
+                ("PDF Files", "*.pdf")
+            ]
+        )
+        if file_path:
+            self.process_file(file_path)
+
+    def clean_thai_name(self, name):
+        """Clean name by normalizing spaces and keeping only title and first two words"""
+        # Replace multiple spaces with single space and strip
         name = re.sub(r'\s+', ' ', name).strip()
+        # Split into parts and keep only first 3 words (title + firstname + lastname)
         parts = name.split()
         return ' '.join(parts[:2]) if parts else ''
 
-    def process_file(self, file_path: str) -> None:
-        """
-        Process the selected file and extract names.
-        
-        Args:
-            file_path: Path to the input file
-        """
-        self.progress.start()
-        self.select_btn.config(state='disabled')
-        
+    def extract_text_from_pdf(self, file_path):
+        text = ""
         try:
-            # File type specific processing
-            text = (self.extract_text_from_pdf(file_path) 
-                   if file_path.lower().endswith('.pdf')
-                   else self.extract_text_from_docx(file_path))
+            reader = PdfReader(file_path)
+            for page in reader.pages:
+                text += page.extract_text() + "\n"
+        except Exception as e:
+            raise Exception(f"PDF reading error: {str(e)}")
+        return text
+
+    def extract_text_from_docx(self, file_path):
+        text = ""
+        try:
+            doc = Document(file_path)
+            for paragraph in doc.paragraphs:
+                text += paragraph.text + "\n"
+        except Exception as e:
+            raise Exception(f"DOCX reading error: {str(e)}")
+        return text
+
+    def process_file(self, file_path):
+        # Clear previous entries
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        try:
+            # Extract text based on file type
+            if file_path.lower().endswith('.pdf'):
+                text = self.extract_text_from_pdf(file_path)
+            else:  # .docx
+                text = self.extract_text_from_docx(file_path)
+
+            # Thai name pattern with titles
+            name_pattern = r'\d+\)\s*((?:นาย|นาง|นางสาว|ว่าที่[ก-์\s]+|ว่าที่พันตรี|ว่าที่ร้อยตรี)[ก-์\s]+[ก-์]+)'
+            names = re.findall(name_pattern, text)
             
-            names = re.findall(NAME_PATTERN, text)
-            clean_names = [self.clean_thai_name(name) for name in names]
-            self.all_names = sorted(Counter(clean_names).items())
+            # Clean names to keep only title + firstname + lastname
+            names = [self.clean_thai_name(name) for name in names]
             
-            self._update_treeview()
+            # Count occurrences
+            name_counts = Counter(names)
             
+            # Store all names for filtering
+            self.all_names = sorted(name_counts.items())
+            
+            # Display results
+            for name, count in self.all_names:
+                self.tree.insert('', tk.END, values=(name, count))
+
             if not self.all_names:
                 messagebox.showwarning("คำเตือน", "ไม่พบรายชื่อในไฟล์")
-                
+
         except Exception as e:
-            logging.error(f"Error processing file: {str(e)}")
             messagebox.showerror("Error", f"เกิดข้อผิดพลาด: {str(e)}")
-        finally:
-            self.progress.stop()
-            self.select_btn.config(state='normal')
 
-    # ... (keep other existing methods but add proper type hints)
-
-    def export_to_excel(self) -> None:
-        """Export the processed names to an Excel file"""
+    def export_to_excel(self):
         if not self.all_names:
             messagebox.showwarning("คำเตือน", "ไม่มีข้อมูลที่จะส่งออก")
             return
             
         try:
-            default_filename = f"name_list_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            # Get save file location
             file_path = filedialog.asksaveasfilename(
                 defaultextension=".xlsx",
                 filetypes=[("Excel Files", "*.xlsx")],
-                initialfile=default_filename
+                initialfile=f"name_list_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
             )
             
             if not file_path:
                 return
                 
+            # Create workbook and select active sheet
             wb = Workbook()
             ws = wb.active
             ws.title = "Name List"
             
-            # Add headers with style
-            for col, header in enumerate(['ชื่อ', 'จำนวน'], 1):
-                cell = ws.cell(row=1, column=col, value=header)
-                cell.font = cell.font.copy(bold=True)
+            # Add headers
+            ws['A1'] = 'ชื่อ'
+            ws['B1'] = 'จำนวน'
             
-            # Add data with auto-adjusted column width
+            # Add data
             for row, (name, count) in enumerate(self.all_names, start=2):
-                ws.cell(row=row, column=1, value=name)
-                ws.cell(row=row, column=2, value=count)
+                ws[f'A{row}'] = name
+                ws[f'B{row}'] = count
             
-            # Auto-adjust column widths
-            for column in ws.columns:
-                max_length = max(len(str(cell.value)) for cell in column)
-                ws.column_dimensions[column[0].column_letter].width = max_length + 2
-            
+            # Save workbook
             wb.save(file_path)
             messagebox.showinfo("สำเร็จ", "ส่งออกไฟล์ Excel เรียบร้อยแล้ว")
             
         except Exception as e:
-            logging.error(f"Error exporting to Excel: {str(e)}")
             messagebox.showerror("Error", f"เกิดข้อผิดพลาดในการส่งออก: {str(e)}")
 
 def main():
